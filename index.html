@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf8">
+		<title>CircleCI DAG</title>
+
+		<style>
+			body, html {
+				height: 100%;
+			}
+
+			body {
+				margin: 0;
+				display: grid;
+				grid-template-areas: "input controls"
+				                     "input output";
+			}
+
+			textarea {
+				grid-area: input;
+			}
+
+			.controls {
+				grid-area: controls;
+			}
+
+			#output {
+				grid-area: output;
+				overflow: auto;
+			}
+		</style>
+	</head>
+
+	<body>
+		<textarea id="config" placeholder="paste .circleci/config.yml here"></textarea>
+
+		<div class="controls">
+			<select id="filter-key">
+				<option selected>branch</option>
+				<option>tag</option>
+			</select>
+
+			<input id="filter-value">
+		</div>
+
+		<div id="output"></div>
+
+		<script type="module">
+			import yaml from 'https://esm.sh/yaml'
+			import dedent from 'https://esm.sh/dedent'
+			import mermaid from 'https://esm.sh/mermaid';
+			mermaid.initialize({ startOnLoad: false });
+
+			import {
+				renderMermaid,
+				filterJobRequires,
+				filterUnrequitedJobs,
+				filterJobs,
+				expandMatrixJobs,
+				getWorkflowJobs,
+			} from './parse.js'
+
+			async function main()  {
+				const rawConfig = document.getElementById('config').value
+				const filterKey = document.getElementById('filter-key').value
+				const filterValue = document.getElementById('filter-value').value
+
+				if(!filterValue) return
+
+				const config = yaml.parse(rawConfig, {merge: true})
+				console.log({config})
+
+				const workflows = Object.keys(config.workflows)
+
+				const sections = workflows.flatMap(workflow => {
+					const jobs = getWorkflowJobs(
+						config,
+						workflow
+					)
+					const matrixJobs = expandMatrixJobs(jobs)
+					console.log({workflow, matrixJobs})
+					const filter = { [filterKey]: filterValue }
+					const filteredJobs = filterJobs(matrixJobs, filter)
+					console.log({workflow, filteredJobs})
+					const filteredUnrequitedJobs = filterJobRequires(
+						filterUnrequitedJobs(
+							filteredJobs
+						)
+					)
+					console.log({workflow, filteredUnrequitedJobs})
+
+					if(!filteredUnrequitedJobs.length) return []
+
+					return dedent`
+					subgraph ${workflow}
+					direction LR
+					${renderMermaid(filteredUnrequitedJobs, workflow)}
+					end`
+				})
+
+				const diagram = dedent`
+				flowchart LR
+				${sections.join('\n')}
+				`
+
+				const { svg } = await mermaid.render('no', diagram);
+				console.log(svg)
+				document.getElementById('output').innerHTML = svg;
+			}
+
+			document.addEventListener('input', main)
+			window.addEventListener('DOMContentLoaded', main)
+		</script>
+	</body>
+</html>
